@@ -88,6 +88,39 @@ callWithJQuery ($) ->
             format: formatter
             numInputs: 10
 
+        mAvg: (formatter=usFmt) -> (arg) -> (data, rowKey, colKey) ->
+            attr = arg[0]
+            avgFacts = {}
+            i = 0
+            cont = {}
+            avg = {}
+            len = arg.length
+            while (i < len) 
+                avgFacts[arg[i]] = 0
+                cont[arg[i]] = 0
+                avg[arg[i]] = 0
+                i++
+            push: (record) -> 
+                i = 0
+                while (i < len) 
+                    if not isNaN parseFloat(record[arg[i]]) 
+                        cont[arg[i]] += 1
+                        avgFacts[arg[i]] += parseFloat(record[arg[i]]) 
+                    i++
+                avgFacts
+            value: -> parseFloat(avgFacts[arg[0]]/cont[arg[0]]);
+            multivalue: -> 
+                for own medida, m of avgFacts
+                    avg[medida] = avgFacts[medida]/cont[medida] if avgFacts.hasOwnProperty(medida)
+                avg
+
+            multivalue2: -> 
+                for medida in avgFacts
+                    avg[medida] = avgFacts[medida]/cont[medida] if avgFacts.hasOwnProperty(medida)
+                parseFloat(avg)
+            format: formatter
+            numInputs: 10
+
         min: (formatter=usFmt) -> ([attr]) -> (data, rowKey, colKey) ->
             val: null
             push: (record) ->
@@ -142,6 +175,7 @@ callWithJQuery ($) ->
         "List Unique Values":   tpl.listUnique(", ")
         "Sum":                  tpl.sum(usFmt)
         "Multi-measure Sum":    tpl.mSum(usFmt)
+        "Multi-measure Avg":    tpl.mAvg(usFmt)
         "Average":              tpl.average(usFmt)
         "Minimum":              tpl.min(usFmt)
         "Maximum":              tpl.max(usFmt)
