@@ -156,6 +156,7 @@ callWithJQuery ($) ->
     renderers =
         "Table":                    (data, opts) ->   pivotTableRenderer(data, opts)
         "Multi Measure Table Rows": (data, opts) -> multiRowsTableRenderer(data, opts)   
+        "Multi Measure Table Columns": (data, opts) -> multiColumnsTableRenderer(data, opts)   
         "Heatmap":                  (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("heatmap",    opts)
         "Row Heatmap":              (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("rowheatmap", opts)
         "Col Heatmap":              (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("colheatmap", opts)
@@ -374,8 +375,160 @@ callWithJQuery ($) ->
     $.pivotUtilities = {aggregatorTemplates, aggregators, renderers, derivers, locales,
         naturalSort, numberFormat, sortAs, PivotData}
 
+
     ###
     Default Renderer for hierarchical table layout
+    ###
+
+    pivotTableRenderer = (pivotData, opts) ->
+
+        defaults =
+            localeStrings:
+                totals: "Totals"
+
+        opts = $.extend defaults, opts
+
+        colAttrs = pivotData.colAttrs
+        rowAttrs = pivotData.rowAttrs
+        rowKeys = pivotData.getRowKeys()
+        colKeys = pivotData.getColKeys()
+
+        #now actually build the output
+        result = document.createElement("table")
+        result.className = "pvtTable"
+
+        #helper function for setting row/col-span in pivotTableRenderer
+        spanSize = (arr, i, j) ->
+            if i != 0
+                noDraw = true
+                for x in [0..j]
+                    if arr[i-1][x] != arr[i][x]
+                        noDraw = false
+                if noDraw
+                  return -1 #do not draw cell
+            len = 0
+            while i+len < arr.length
+                stop = false
+                for x in [0..j]
+                    stop = true if arr[i][x] != arr[i+len][x]
+                break if stop
+                len++
+            return len
+
+        #the first few rows are for col headers
+        thead = document.createElement("thead")
+        for own j, c of colAttrs
+            tr = document.createElement("tr")
+            if parseInt(j) == 0 and rowAttrs.length != 0
+                th = document.createElement("th")
+                th.setAttribute("colspan", rowAttrs.length)
+                th.setAttribute("rowspan", colAttrs.length)
+                tr.appendChild th
+            th = document.createElement("th")
+            th.className = "pvtAxisLabel"
+            th.textContent = c
+            tr.appendChild th
+            for own i, colKey of colKeys
+                x = spanSize(colKeys, parseInt(i), parseInt(j))
+                if x != -1
+                    th = document.createElement("th")
+                    th.className = "pvtColLabel"
+                    th.textContent = colKey[j]
+                    th.setAttribute("colspan", x)
+                    if parseInt(j) == colAttrs.length-1 and rowAttrs.length != 0
+                        th.setAttribute("rowspan", 2)
+                    tr.appendChild th
+            if parseInt(j) == 0
+                th = document.createElement("th")
+                th.className = "pvtTotalLabel"
+                th.innerHTML = opts.localeStrings.totals
+                th.setAttribute("rowspan", colAttrs.length + (if rowAttrs.length ==0 then 0 else 1))
+                tr.appendChild th
+            thead.appendChild tr
+
+        #then a row for row header headers
+        if rowAttrs.length !=0
+            tr = document.createElement("tr")
+            for own i, r of rowAttrs
+                th = document.createElement("th")
+                th.className = "pvtAxisLabel"
+                th.textContent = r
+                tr.appendChild th 
+            th = document.createElement("th")
+            if colAttrs.length ==0
+                th.className = "pvtTotalLabel"
+                th.innerHTML = opts.localeStrings.totals
+            tr.appendChild th
+            thead.appendChild tr
+        result.appendChild thead
+
+        #now the actual data rows, with their row headers and totals
+        tbody = document.createElement("tbody")
+        for own i, rowKey of rowKeys
+            tr = document.createElement("tr")
+            for own j, txt of rowKey
+                x = spanSize(rowKeys, parseInt(i), parseInt(j))
+                if x != -1
+                    th = document.createElement("th")
+                    th.className = "pvtRowLabel"
+                    th.textContent = txt
+                    th.setAttribute("rowspan", x)
+                    if parseInt(j) == rowAttrs.length-1 and colAttrs.length !=0
+                        th.setAttribute("colspan",2)
+                    tr.appendChild th
+            for own j, colKey of colKeys #this is the tight loop
+                aggregator = pivotData.getAggregator(rowKey, colKey)
+                val = aggregator.value()
+                td = document.createElement("td")
+                td.className = "pvtVal row#{i} col#{j}"
+                td.textContent = aggregator.format(val)
+                td.setAttribute("data-value", val)
+                tr.appendChild td
+
+            totalAggregator = pivotData.getAggregator(rowKey, [])
+            val = totalAggregator.value()
+            td = document.createElement("td")
+            td.className = "pvtTotal rowTotal"
+            td.textContent = totalAggregator.format(val)
+            td.setAttribute("data-value", val)
+            td.setAttribute("data-for", "row"+i)
+            tr.appendChild td
+            tbody.appendChild tr
+
+        #finally, the row for col totals, and a grand total
+        tr = document.createElement("tr")
+        th = document.createElement("th")
+        th.className = "pvtTotalLabel"
+        th.innerHTML = opts.localeStrings.totals
+        th.setAttribute("colspan", rowAttrs.length + (if colAttrs.length == 0 then 0 else 1))
+        tr.appendChild th
+        for own j, colKey of colKeys
+            totalAggregator = pivotData.getAggregator([], colKey)
+            val = totalAggregator.value()
+            td = document.createElement("td")
+            td.className = "pvtTotal colTotal"
+            td.textContent = totalAggregator.format(val)
+            td.setAttribute("data-value", val)
+            td.setAttribute("data-for", "col"+j)
+            tr.appendChild td
+        totalAggregator = pivotData.getAggregator([], [])
+        val = totalAggregator.value()
+        td = document.createElement("td")
+        td.className = "pvtGrandTotal"
+        td.textContent = totalAggregator.format(val)
+        td.setAttribute("data-value", val)
+        tr.appendChild td
+        tbody.appendChild tr
+        result.appendChild tbody
+
+        #squirrel this away for later
+        result.setAttribute("data-numrows", rowKeys.length)
+        result.setAttribute("data-numcols", colKeys.length)
+
+        return result
+
+    ###
+    Renderer for hierarchical table layout with multiple measures on the rows
     ###
 
     multiRowsTableRenderer = (pivotData, opts) ->
@@ -615,7 +768,10 @@ callWithJQuery ($) ->
 
         return result
 
-    pivotTableRenderer = (pivotData, opts) ->
+    ###
+    Renderer for hierarchical table layout with multiple measures on the columns
+    ###
+    multiColumnsTableRenderer = (pivotData, opts) ->
 
         defaults =
             localeStrings:
@@ -652,50 +808,114 @@ callWithJQuery ($) ->
 
         #the first few rows are for col headers
         thead = document.createElement("thead")
+        n_medidas = 1
+
+        tmpAggregator = pivotData.getAggregator([], [])
+        n_medidas = Object.keys(tmpAggregator.multivalue()).length if tmpAggregator.multivalue
+
+        tr = document.createElement("tr")
+        th = document.createElement("th")
+        th.className = "pvtAxisLabel"
+        th.setAttribute("colspan", rowAttrs.length)
+        th.setAttribute("rowspan", colAttrs.length+1)
+        tr.appendChild(th)
+
         for own j, c of colAttrs
-            tr = document.createElement("tr")
-            if parseInt(j) == 0 and rowAttrs.length != 0
-                th = document.createElement("th")
-                th.setAttribute("colspan", rowAttrs.length)
-                th.setAttribute("rowspan", colAttrs.length)
-                tr.appendChild th
-            th = document.createElement("th")
-            th.className = "pvtAxisLabel"
-            th.textContent = c
-            tr.appendChild th
+
+            # tr = document.createElement("tr")
+            # if parseInt(j) == 0 and rowAttrs.length != 0
+            #     th = document.createElement("th")
+            #     th.setAttribute("colspan", rowAttrs.length)
+            #     th.setAttribute("rowspan", colAttrs.length)
+            #     tr.appendChild th
+            # th = document.createElement("th")
+            # th.className = "pvtAxisLabel"
+            # th.textContent = c
+            # tr.appendChild th
+
             for own i, colKey of colKeys
                 x = spanSize(colKeys, parseInt(i), parseInt(j))
+
+                if x==1 
+                    x = n_medidas;
+                else
+                    if x != -1 && n_medidas > 1
+                        x = x*n_medidas
+
                 if x != -1
                     th = document.createElement("th")
                     th.className = "pvtColLabel"
                     th.textContent = colKey[j]
                     th.setAttribute("colspan", x)
                     if parseInt(j) == colAttrs.length-1 and rowAttrs.length != 0
-                        th.setAttribute("rowspan", 2)
+                        th.setAttribute("rowspan", 1)
                     tr.appendChild th
+
             if parseInt(j) == 0
                 th = document.createElement("th")
                 th.className = "pvtTotalLabel"
                 th.innerHTML = opts.localeStrings.totals
-                th.setAttribute("rowspan", colAttrs.length + (if rowAttrs.length ==0 then 0 else 1))
+                th.setAttribute("rowspan", 2)
                 tr.appendChild th
             thead.appendChild tr
+            result.appendChild thead
+
+            tr = document.createElement("tr")
+
+            #add line for measures
+            if parseInt(j) == colAttrs.length - 1
+                for own i, colKey of colKeys
+                    for m in Object.keys(tmpAggregator.multivalue())
+                        th = document.createElement("th")
+                        th.className = "pvtColLabel"
+                        th.textContent = m
+                        th.setAttribute("colspan", 1)
+                        th.setAttribute("rowspan", 1) if parseInt(j) == colAttrs.length - 1 && rowAttrs.length != 0
+                        tr.appendChild(th)
+                thead.appendChild(tr)
+                result.appendChild(thead)
+
+        console.log(colAttrs)
+        if colAttrs.length == 0
+            console.log("oi")
+            tr = document.createElement("tr")
+            th = document.createElement("th")
+            th.className = "pvtAxisLabel"
+            th.setAttribute("colspan", rowAttrs.length)
+            th.setAttribute("rowspan", colAttrs.length+1)
+            tr.appendChild(th);
+            
+            for m in Object.keys(tmpAggregator.multivalue())
+                th = document.createElement("th")
+                th.className = "pvtColLabel"
+                th.textContent = m;
+                th.setAttribute("colspan", 1)
+                tr.appendChild(th)
+            
+            
+            th = document.createElement("th")
+            th.innerHTML = "Total"
+            th.className = "pvtTotalLabel pvtTotalCol"
+            tr.appendChild(th)
+            thead.appendChild(tr)
+            result.appendChild(thead)
+              
 
         #then a row for row header headers
-        if rowAttrs.length !=0
-            tr = document.createElement("tr")
-            for own i, r of rowAttrs
-                th = document.createElement("th")
-                th.className = "pvtAxisLabel"
-                th.textContent = r
-                tr.appendChild th 
-            th = document.createElement("th")
-            if colAttrs.length ==0
-                th.className = "pvtTotalLabel"
-                th.innerHTML = opts.localeStrings.totals
-            tr.appendChild th
-            thead.appendChild tr
-        result.appendChild thead
+        # if rowAttrs.length !=0
+        #     tr = document.createElement("tr")
+        #     for own i, r of rowAttrs
+        #         th = document.createElement("th")
+        #         th.className = "pvtAxisLabel"
+        #         th.textContent = r
+        #         tr.appendChild th 
+        #     th = document.createElement("th")
+        #     if colAttrs.length ==0
+        #         th.className = "pvtTotalLabel"
+        #         th.innerHTML = opts.localeStrings.totals
+        #     tr.appendChild th
+        #     thead.appendChild tr
+        # result.appendChild thead
 
         #now the actual data rows, with their row headers and totals
         tbody = document.createElement("tbody")
@@ -709,45 +929,83 @@ callWithJQuery ($) ->
                     th.textContent = txt
                     th.setAttribute("rowspan", x)
                     if parseInt(j) == rowAttrs.length-1 and colAttrs.length !=0
-                        th.setAttribute("colspan",2)
+                        th.setAttribute("colspan",1)
                     tr.appendChild th
+
             for own j, colKey of colKeys #this is the tight loop
                 aggregator = pivotData.getAggregator(rowKey, colKey)
-                val = aggregator.value()
-                td = document.createElement("td")
-                td.className = "pvtVal row#{i} col#{j}"
-                td.textContent = aggregator.format(val)
-                td.setAttribute("data-value", val)
-                tr.appendChild td
+                if aggregator.multivalue
+                    for own mc, m of Object.keys(aggregator.multivalue())
+                        td = document.createElement("td")
+                        td.className = "pvtVal row#{i} col#{j}"
+                        td.innerHTML = aggregator.format(aggregator.multivalue()[m])
+                        td.setAttribute("data-value", aggregator.format(aggregator.multivalue()[m]))
+                        tr.appendChild(td)
+                else
+                    for n in n_medidas
+                        val = aggregator.value()
+                        td = document.createElement("td")
+                        td.className = "pvtVal row#{i} col#{j}"
+                        td.textContent = aggregator.format(val)
+                        td.setAttribute("data-value", val)
+                        tr.appendChild td
+
+            if colAttrs.length == 0
+                aggregator = pivotData.getAggregator(rowKey, [])
+                for m in Object.keys(aggregator.multivalue())
+                    td = document.createElement("td")
+                    td.className = "pvtVal row" + i + " col" + j
+                    td.innerHTML = aggregator.format(aggregator.multivalue()[m])
+                    td.setAttribute("data-value", aggregator.multivalue()[m])
+                    tr.appendChild(td)      
 
             totalAggregator = pivotData.getAggregator(rowKey, [])
-            val = totalAggregator.value()
+            val = 0
             td = document.createElement("td")
             td.className = "pvtTotal rowTotal"
+
+            for m in Object.keys(totalAggregator.multivalue())
+                val+=totalAggregator.multivalue()[m];
+
             td.textContent = totalAggregator.format(val)
             td.setAttribute("data-value", val)
             td.setAttribute("data-for", "row"+i)
             tr.appendChild td
             tbody.appendChild tr
+            result.appendChild tbody
 
         #finally, the row for col totals, and a grand total
         tr = document.createElement("tr")
         th = document.createElement("th")
         th.className = "pvtTotalLabel"
         th.innerHTML = opts.localeStrings.totals
-        th.setAttribute("colspan", rowAttrs.length + (if colAttrs.length == 0 then 0 else 1))
+        th.setAttribute("colspan", rowAttrs.length)
         tr.appendChild th
         for own j, colKey of colKeys
             totalAggregator = pivotData.getAggregator([], colKey)
-            val = totalAggregator.value()
-            td = document.createElement("td")
-            td.className = "pvtTotal colTotal"
-            td.textContent = totalAggregator.format(val)
-            td.setAttribute("data-value", val)
-            td.setAttribute("data-for", "col"+j)
-            tr.appendChild td
+            val = totalAggregator.multivalue()
+            for m in Object.keys(val)
+                td = document.createElement("td")
+                td.className = "pvtTotal colTotal"
+                td.innerHTML = totalAggregator.format(val[m]);
+                td.setAttribute("data-value", val[m])
+                td.setAttribute("data-for", "col" + j)
+                tr.appendChild(td)
+
+        if colAttrs.length == 0
+            aggregator = pivotData.getAggregator([], []);
+            for m in Object.keys(aggregator.multivalue())
+                td = document.createElement("td")
+                td.className = "pvtVal row" + i + " col" + j
+                td.innerHTML = aggregator.format(aggregator.multivalue()[m])
+                td.setAttribute("data-value", aggregator.multivalue()[m])
+                tr.appendChild(td)
+    
         totalAggregator = pivotData.getAggregator([], [])
-        val = totalAggregator.value()
+        val = 0
+        for m in Object.keys(totalAggregator.multivalue())
+            val+=totalAggregator.multivalue()[m];
+
         td = document.createElement("td")
         td.className = "pvtGrandTotal"
         td.textContent = totalAggregator.format(val)
@@ -761,6 +1019,8 @@ callWithJQuery ($) ->
         result.setAttribute("data-numcols", colKeys.length)
 
         return result
+
+
 
     ###
     Pivot Table core: create PivotData object and call Renderer on it
