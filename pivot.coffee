@@ -68,6 +68,26 @@ callWithJQuery ($) ->
             format: formatter
             numInputs: if attr? then 0 else 1
 
+        mSum: (formatter=usFmt) -> (arg) -> (data, rowKey, colKey) ->
+            attr = arg[0]
+            summedFacts = {}
+            i = 0
+            len = arg.length
+            while (i < len) 
+                summedFacts[arg[i]] = 0
+                i++
+            push: (record) -> 
+                i = 0
+                while (i < len) 
+                    summedFacts[arg[i]] += parseFloat(record[arg[i]]) if not isNaN parseFloat(record[arg[i]]) 
+                    i++
+                summedFacts
+            value: -> parseFloat(summedFacts[arg[0]])
+            multivalue: -> summedFacts
+            multivalue2: -> parseFloat(summedFacts)
+            format: formatter
+            numInputs: 10
+
         min: (formatter=usFmt) -> ([attr]) -> (data, rowKey, colKey) ->
             val: null
             push: (record) ->
@@ -107,20 +127,6 @@ callWithJQuery ($) ->
             format: formatter
             numInputs: if num? and denom? then 0 else 2
 
-        sumOverSumBound80: (upper=true, formatter=usFmt) -> ([num, denom]) -> (data, rowKey, colKey) ->
-            sumNum: 0
-            sumDenom: 0
-            push: (record) ->
-                @sumNum   += parseFloat(record[num])   if not isNaN parseFloat(record[num])
-                @sumDenom += parseFloat(record[denom]) if not isNaN parseFloat(record[denom])
-            value: ->
-                sign = if upper then 1 else -1
-                (0.821187207574908/@sumDenom + @sumNum/@sumDenom + 1.2815515655446004*sign*
-                    Math.sqrt(0.410593603787454/ (@sumDenom*@sumDenom) + (@sumNum*(1 - @sumNum/ @sumDenom))/ (@sumDenom*@sumDenom)))/
-                    (1 + 1.642374415149816/@sumDenom)
-            format: formatter
-            numInputs: if num? and denom? then 0 else 2
-
         fractionOf: (wrapped, type="total", formatter=usFmtPct) -> (x...) -> (data, rowKey, colKey) ->
             selector: {total:[[],[]],row:[rowKey,[]],col:[[],colKey]}[type]
             inner: wrapped(x...)(data, rowKey, colKey)
@@ -135,13 +141,11 @@ callWithJQuery ($) ->
         "Count Unique Values":  tpl.countUnique(usFmtInt)
         "List Unique Values":   tpl.listUnique(", ")
         "Sum":                  tpl.sum(usFmt)
-        "Integer Sum":          tpl.sum(usFmtInt)
+        "Multi-measure Sum":    tpl.mSum(usFmt)
         "Average":              tpl.average(usFmt)
         "Minimum":              tpl.min(usFmt)
         "Maximum":              tpl.max(usFmt)
         "Sum over Sum":         tpl.sumOverSum(usFmt)
-        "80% Upper Bound":      tpl.sumOverSumBound80(true, usFmt)
-        "80% Lower Bound":      tpl.sumOverSumBound80(false, usFmt)
         "Sum as Fraction of Total":     tpl.fractionOf(tpl.sum(),   "total", usFmtPct)
         "Sum as Fraction of Rows":      tpl.fractionOf(tpl.sum(),   "row",   usFmtPct)
         "Sum as Fraction of Columns":   tpl.fractionOf(tpl.sum(),   "col",   usFmtPct)
@@ -150,11 +154,11 @@ callWithJQuery ($) ->
         "Count as Fraction of Columns": tpl.fractionOf(tpl.count(), "col",   usFmtPct)
 
     renderers =
-        "Table":          (data, opts) ->   pivotTableRenderer(data, opts)
-        "Table Barchart": (data, opts) -> $(pivotTableRenderer(data, opts)).barchart()
-        "Heatmap":        (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("heatmap",    opts)
-        "Row Heatmap":    (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("rowheatmap", opts)
-        "Col Heatmap":    (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("colheatmap", opts)
+        "Table":                    (data, opts) ->   pivotTableRenderer(data, opts)
+        "Multi Measure Table Rows": (data, opts) -> multiRowsTableRenderer(data, opts)   
+        "Heatmap":                  (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("heatmap",    opts)
+        "Row Heatmap":              (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("rowheatmap", opts)
+        "Col Heatmap":              (data, opts) -> $(pivotTableRenderer(data, opts)).heatmap("colheatmap", opts)
 
     locales = 
         en: 
@@ -373,6 +377,243 @@ callWithJQuery ($) ->
     ###
     Default Renderer for hierarchical table layout
     ###
+
+    multiRowsTableRenderer = (pivotData, opts) ->
+
+        defaults =
+            localeStrings:
+                totals: "Totals"
+
+        opts = $.extend defaults, opts
+
+        colAttrs = pivotData.colAttrs
+        rowAttrs = pivotData.rowAttrs
+        rowKeys = pivotData.getRowKeys()
+        colKeys = pivotData.getColKeys()
+
+        #now actually build the output
+        result = document.createElement("table")
+        result.className = "pvtTable"
+
+        #helper function for setting row/col-span in pivotTableRenderer
+        spanSize = (arr, i, j) ->
+            if i != 0
+                noDraw = true
+                for x in [0..j]
+                    if arr[i-1][x] != arr[i][x]
+                        noDraw = false
+                if noDraw
+                  return -1 #do not draw cell
+            len = 0
+            while i+len < arr.length
+                stop = false
+                for x in [0..j]
+                    stop = true if arr[i][x] != arr[i+len][x]
+                break if stop
+                len++
+            return len
+
+        #the first few rows are for col headers
+        thead = document.createElement("thead")
+        
+        n_medidas = 1
+        tmpAggregator = pivotData.getAggregator([], [])
+        n_medidas = Object.keys(tmpAggregator.multivalue()).length if tmpAggregator.multivalue
+
+        tr = document.createElement("tr")
+        th = document.createElement("th")
+        th.className = "pvtAxisLabel";
+        colspan_header = rowAttrs.length
+        colspan_header++ if n_medidas >= 1
+        console.log(rowAttrs.length);
+        th.setAttribute("colspan", colspan_header);
+        th.setAttribute("rowspan", colAttrs.length);
+        tr.appendChild(th);
+
+        for own j, c of colAttrs
+
+            for own i, colKey of colKeys
+                x = spanSize(colKeys, parseInt(i), parseInt(j))
+                if x != -1
+                    th = document.createElement("th")
+                    th.className = "pvtColLabel"
+                    th.textContent = colKey[j]
+                    th.setAttribute("colspan", x)
+                    if parseInt(j) == colAttrs.length-1 and rowAttrs.length != 0
+                        th.setAttribute("rowspan", 1) #antigo 2
+                    tr.appendChild th
+            if parseInt(j) == 0
+                th = document.createElement("th")
+                th.className = "pvtTotalLabel"
+                th.innerHTML = opts.localeStrings.totals
+                th.setAttribute("rowspan", colAttrs.length)
+                tr.appendChild th
+            thead.appendChild tr
+            result.appendChild(thead)
+
+            tr = document.createElement("tr") if j != colAttrs.length - 1 #testar
+
+        if colAttrs.length == 0
+            tr = document.createElement("tr")
+            th = document.createElement("th")
+            th.className = "pvtAxisLabel"
+            colspan_header = rowAttrs.length
+            colspan_header++ if n_medidas >1
+            th.setAttribute("colspan", colspan_header)
+            tr.appendChild(th)
+            th = document.createElement("th")
+            th.innerHTML = "Total"
+            th.className = "pvtTotalLabel pvtTotalCol"
+            tr.appendChild(th)
+            thead.appendChild(tr)
+            result.appendChild(thead)
+
+        #now the actual data rows, with their row headers and totals
+        tbody = document.createElement("tbody")
+        if rowKeys.length == 0
+            for mc, m of Object.keys(tmpAggregator.multivalue())
+                tr = document.createElement("tr")
+                th = document.createElement("th")
+                th.textContent = m
+                th.setAttribute("rowspan", 1)
+                tr.appendChild(th)
+
+                for own j, colKey of colKeys #this is the tight loop
+                    colKey = colKeys[j];
+                    aggregator = pivotData.getAggregator([], colKey)
+                    val = aggregator.multivalue()
+                    td = document.createElement("td")
+                    td.className = "pvtVal row#{i} col#{j}"
+                    td.textContent = aggregator.format(aggregator.multivalue()[m])
+                    td.setAttribute("data-value", val)
+                    tr.appendChild td
+                totalAggregator = pivotData.getAggregator([], [])
+                val = totalAggregator.multivalue()
+                td = document.createElement("td")
+                td.className = "pvtTotal rowTotal"
+                td.textContent = totalAggregator.format(totalAggregator.multivalue()[m])
+                td.setAttribute("data-value", val)
+                td.setAttribute("data-for", "row"+i)
+                tr.appendChild td
+                tbody.appendChild tr
+                result.appendChild tbody
+
+
+        #pra cada dimensao na linha
+        for own i, rowKey of rowKeys
+            tr = document.createElement("tr")
+            tmpAggregator = pivotData.getAggregator([], []);
+
+            for own j, txt of rowKey
+                x = spanSize(rowKeys, parseInt(i), parseInt(j))
+
+                if x==1
+                    x = n_medidas;
+                else
+                    if x != -1 && n_medidas > 1
+                        x = x*n_medidas;
+                
+
+                if x != -1
+                    th = document.createElement("th")
+                    th.className = "pvtRowLabel"
+                    th.textContent = txt
+                    th.setAttribute("rowspan", x)
+                    if parseInt(j) == rowAttrs.length-1 and colAttrs.length !=0
+                        th.setAttribute("colspan",1) #antigo  =2
+                    tr.appendChild th
+
+            for own mc, m of Object.keys(tmpAggregator.multivalue())
+                th = document.createElement("th")
+                th.className = "pvtRowLabel"
+                th.textContent = m
+                th.setAttribute("rowspan", 1)
+
+                tr.appendChild(th)
+
+                for own j, colKey of colKeys #this is the tight loop
+                    aggregator = pivotData.getAggregator(rowKey, colKey)
+                    if aggregator.multivalue
+                        val = aggregator.format(aggregator.multivalue()[m])
+                        td = document.createElement("td")
+                        td.className = "pvtVal row#{i} col#{j}"
+                        td.textContent = aggregator.format(val)
+                        td.setAttribute("data-value", val)
+                        tr.appendChild td
+                    else
+                        val = aggregator.value()
+                        td = document.createElement("td")
+                        td.className = "pvtVal row#{i} col#{j}"
+                        td.textContent = aggregator.format(val)
+                        td.setAttribute("data-value", val)
+                        tr.appendChild td
+
+                totalAggregator = pivotData.getAggregator(rowKey, [])
+                val = totalAggregator.multivalue()
+                td = document.createElement("td")
+                td.className = "pvtTotal rowTotal"
+                td.textContent = totalAggregator.format(totalAggregator.multivalue()[m])
+                td.setAttribute("data-value", val)
+                td.setAttribute("data-for", "row"+i)
+                tr.appendChild td
+                tbody.appendChild tr
+                result.appendChild tbody
+                tr = document.createElement("tr") if mc < Object.keys(tmpAggregator.multivalue())["length"] - 1
+
+
+
+        #finally, the row for col totals, and a grand total
+        tr = document.createElement("tr")
+        th = document.createElement("th")
+        th.className = "pvtTotalLabel"
+        th.innerHTML = opts.localeStrings.totals
+        colspan_total = rowAttrs.length;
+        colspan_total++ if n_medidas >= 1
+      
+        th.setAttribute("colspan", colspan_total)
+        tr.appendChild th
+
+        for own j, colKey of colKeys
+            totalAggregator = pivotData.getAggregator([], colKey)
+
+            if totalAggregator.multivalue
+                td = document.createElement("td")
+                td.className = "pvtVal row" + i + " col" + j
+                val = 0
+                for m in Object.keys(totalAggregator.multivalue())
+                  val+=totalAggregator.multivalue()[m]
+                
+                td.innerHTML = totalAggregator.format(val)
+                td.setAttribute("data-value", val)
+                td.setAttribute("data-for", "col" + j)
+                tr.appendChild(td);
+            else
+                val = totalAggregator.value()
+                td = document.createElement("td")
+                td.className = "pvtTotal colTotal"
+                td.textContent = totalAggregator.format(val)
+                td.setAttribute("data-value", val)
+                td.setAttribute("data-for", "col"+j)
+                tr.appendChild td
+
+        totalAggregator = pivotData.getAggregator([], [])
+        val = 0
+        td = document.createElement("td")
+        td.className = "pvtGrandTotal"
+        for m in Object.keys(totalAggregator.multivalue())
+            val+=totalAggregator.multivalue()[m]
+      
+        td.textContent = totalAggregator.format(val)
+        td.setAttribute("data-value", val)
+        tr.appendChild td
+        tbody.appendChild tr
+        result.appendChild tbody
+
+        #squirrel this away for later
+        result.setAttribute("data-numrows", rowKeys.length)
+        result.setAttribute("data-numcols", colKeys.length)
+
+        return result
 
     pivotTableRenderer = (pivotData, opts) ->
 
@@ -914,46 +1155,5 @@ callWithJQuery ($) ->
 
         return this
 
-    ###
-    Barchart post-processing
-    ###
-
-    $.fn.barchart =  ->
-        numRows = @data "numrows"
-        numCols = @data "numcols"
-
-        barcharter = (scope) =>
-            forEachCell = (f) =>
-                @find(scope).each ->
-                    x = $(this).data("value")
-                    f(x, $(this)) if x? and isFinite(x)
-
-            values = []
-            forEachCell (x) -> values.push x
-            max = Math.max(values...)
-            scaler = (x) -> 100*x/(1.4*max)
-            forEachCell (x, elem) ->
-                text = elem.text()
-                wrapper = $("<div>").css
-                    "position": "relative"
-                    "height": "55px"
-                wrapper.append $("<div>").css
-                    "position": "absolute"
-                    "bottom": 0
-                    "left": 0
-                    "right": 0
-                    "height": scaler(x) + "%"
-                    "background-color": "gray"
-                wrapper.append $("<div>").text(text).css
-                    "position":"relative"
-                    "padding-left":"5px"
-                    "padding-right":"5px"
-
-                elem.css("padding": 0,"padding-top": "5px", "text-align": "center").html wrapper
-
-        barcharter ".pvtVal.row#{i}" for i in [0...numRows]
-        barcharter ".pvtTotal.colTotal"
-
-        return this
 
 
