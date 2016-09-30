@@ -1,7 +1,7 @@
 {
   "name": "pivottable-plus",
   "description": "Javascript Pivot Table implementation from Nicolas Kruchten with more funcionalities such as multi-value aggregators and more chart options",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "main": [
     "dist/pivot.js",
     "dist/pivot.css"
