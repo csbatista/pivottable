@@ -68,6 +68,33 @@ callWithJQuery ($) ->
             format: formatter
             numInputs: if attr? then 0 else 1
 
+        movingSum: (formatter=usFmt) -> ([attr]) -> (data, rowKey, colKey) ->
+            sum: 0
+            push: (record) -> @sum += parseFloat(record[attr]) if not isNaN parseFloat(record[attr])
+            value: -> 
+                colKeys = data.getColKeys()
+                counter = 0
+                flat_col_key = colKey.join(String.fromCharCode(0))
+                for own j, item of colKeys
+                    flat_item = item.join(String.fromCharCode(0))
+                    itter = counter if flat_item == flat_col_key
+                    counter++
+                prev_value = 0
+                if itter > 0 
+                    i = k = 1
+                    ref = itter + 1
+                    i = k = 1
+                    ref = itter + 1
+                    `for (i = k = 1, ref = itter + 1; 1 <= ref ? k < ref : k > ref; i = 1 <= ref ? ++k : --k) {
+                        aggregator = data.getAggregator(rowKey, colKeys[itter - i]);
+                        if ('sum' in aggregator) {
+                          prev_value += aggregator.sum;
+                        }
+                      }`
+                @sum + prev_value
+            format: formatter
+            numInputs: 1
+
         mSum: (formatter=usFmt) -> (arg) -> (data, rowKey, colKey) ->
             attr = arg[0]
             summedFacts = {}
@@ -179,6 +206,7 @@ callWithJQuery ($) ->
         "Average":              tpl.average(usFmt)
         "Minimum":              tpl.min(usFmt)
         "Maximum":              tpl.max(usFmt)
+        "Moving Sum":           tpl.movingSum(usFmt)
         "Sum over Sum":         tpl.sumOverSum(usFmt)
         "Sum as Fraction of Total":     tpl.fractionOf(tpl.sum(),   "total", usFmtPct)
         "Sum as Fraction of Rows":      tpl.fractionOf(tpl.sum(),   "row",   usFmtPct)
